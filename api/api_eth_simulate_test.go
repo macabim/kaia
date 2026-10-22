@@ -15,6 +15,8 @@ import (
 	"github.com/kaiachain/kaia/blockchain/vm"
 	"github.com/kaiachain/kaia/common"
 	"github.com/kaiachain/kaia/common/hexutil"
+	"github.com/kaiachain/kaia/crypto"
+	"github.com/kaiachain/kaia/fork"
 	"github.com/kaiachain/kaia/params"
 	"github.com/kaiachain/kaia/storage/database"
 	"github.com/stretchr/testify/require"
@@ -28,13 +30,21 @@ func (b *simulateTestBackend) PrepareSimulation(h *types.Header, _ *state.StateD
 
 func TestSimulateV1OrderedStateAndFailure(t *testing.T) {
 	config := *params.TestChainConfig
-	sender := common.HexToAddress("0xaaaa")
+	require.NoError(t, fork.SetHardForkBlockNumberConfig(&config))
+	defer fork.ClearHardForkBlockNumberConfig()
+	senderKey, err := crypto.GenerateKey()
+	require.NoError(t, err)
+	sender := crypto.PubkeyToAddress(senderKey.PublicKey)
+	payerKey, err := crypto.GenerateKey()
+	require.NoError(t, err)
+	payer := crypto.PubkeyToAddress(payerKey.PublicKey)
 	contract := common.HexToAddress("0xbbbb")
 	revert := common.HexToAddress("0xcccc")
 	// Increment slot zero, emit the new value, and return it.
 	code := hexutil.MustDecode("0x6000546001018060005560005260206000a060206000f3")
 	dbm := database.NewMemoryDBManager()
 	genesis := (&blockchain.Genesis{Config: &config, Alloc: blockchain.GenesisAlloc{
+		payer:    {Balance: new(big.Int).Exp(big.NewInt(10), big.NewInt(20), nil)},
 		sender:   {Balance: new(big.Int).Exp(big.NewInt(10), big.NewInt(20), nil)},
 		contract: {Balance: new(big.Int), Code: code},
 		revert:   {Balance: new(big.Int), Code: hexutil.MustDecode("0x60006000fd")},
@@ -55,6 +65,9 @@ func TestSimulateV1OrderedStateAndFailure(t *testing.T) {
 	api := &EthAPI{kaiaBlockChainAPI: NewKaiaBlockChainAPI(backend)}
 	var args SimulateV1Args
 	require.NoError(t, json.Unmarshal([]byte(`{"blockStateCalls":[{"calls":[{"from":"0x000000000000000000000000000000000000aaaa","to":"0x000000000000000000000000000000000000bbbb","gas":"0x186a0"},{"from":"0x000000000000000000000000000000000000aaaa","to":"0x000000000000000000000000000000000000cccc","gas":"0x186a0"},{"from":"0x000000000000000000000000000000000000aaaa","to":"0x000000000000000000000000000000000000bbbb","gas":"0x186a0"}]}]}`), &args))
+	for i := range args.BlockStateCalls[0].Calls {
+		args.BlockStateCalls[0].Calls[i].From = &sender
+	}
 	result, err := api.SimulateV1(context.Background(), args, nil)
 	require.NoError(t, err)
 	calls := result[0]["calls"].([]simulateCallResult)
@@ -66,6 +79,29 @@ func TestSimulateV1OrderedStateAndFailure(t *testing.T) {
 	require.Zero(t, calls[1].Status)
 	require.NotNil(t, calls[1].Error)
 	require.Equal(t, common.Hash{}, st.GetState(contract, common.Hash{}), "simulation must not change source state")
+	signed, err := types.NewTransactionWithMap(types.TxTypeFeeDelegatedSmartContractExecution, map[types.TxValueKeyType]interface{}{
+		types.TxValueKeyNonce: uint64(0), types.TxValueKeyGasPrice: big.NewInt(1), types.TxValueKeyGasLimit: uint64(100000),
+		types.TxValueKeyTo: contract, types.TxValueKeyAmount: new(big.Int), types.TxValueKeyFrom: sender,
+		types.TxValueKeyData: []byte{}, types.TxValueKeyFeePayer: payer,
+	})
+	require.NoError(t, err)
+	signer := types.MakeSigner(&config, header.Number)
+	signed, err = types.SignTx(signed, signer, senderKey)
+	require.NoError(t, err)
+	signed, err = types.SignTxAsFeePayer(signed, signer, payerKey)
+	require.NoError(t, err)
+	hash := signed.Hash()
+	backend.EXPECT().GetPoolTransaction(hash).Return(signed).Times(1)
+	args.BlockStateCalls[0].Calls[0].TransactionHash = &hash
+	st.SetBalance(sender, new(big.Int))
+	// The sender has no funds. Native fee delegation must still execute the target.
+	args.BlockStateCalls[0].Calls = args.BlockStateCalls[0].Calls[:1]
+	result, err = api.SimulateV1(context.Background(), args, nil)
+	require.NoError(t, err)
+	require.Equal(t, hexutil.Uint64(1), result[0]["calls"].([]simulateCallResult)[0].Status)
+	require.Equal(t, uint64(0), st.GetNonce(sender))
+	args.BlockStateCalls[0].Calls[0].TransactionHash = nil
+
 	args.Validation = true
 	badNonce := hexutil.Uint64(100)
 	args.BlockStateCalls[0].Calls[0].Nonce = &badNonce
