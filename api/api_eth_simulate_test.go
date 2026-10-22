@@ -100,6 +100,15 @@ func TestSimulateV1OrderedStateAndFailure(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, hexutil.Uint64(1), result[0]["calls"].([]simulateCallResult)[0].Status)
 	require.Equal(t, uint64(0), st.GetNonce(sender))
+	transfer := types.NewTransaction(0, sender, big.NewInt(1), 21000, big.NewInt(1), nil)
+	transfer, err = types.SignTx(transfer, signer, payerKey)
+	require.NoError(t, err)
+	transferHash := transfer.Hash()
+	backend.EXPECT().GetPoolTransaction(transferHash).Return(transfer).Times(1)
+	args.BlockStateCalls[0].Calls[0] = simulateCall{TransactionHash: &transferHash}
+	result, err = api.SimulateV1(context.Background(), args, nil)
+	require.NoError(t, err)
+	require.Equal(t, hexutil.Uint64(21000), result[0]["calls"].([]simulateCallResult)[0].GasUsed)
 	args.BlockStateCalls[0].Calls[0].TransactionHash = nil
 
 	args.Validation = true
