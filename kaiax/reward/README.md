@@ -146,13 +146,22 @@ This module does not have any background threads.
 
 #### PrepareHeader
 
-This module initializes `header.Rewardbase` with the node's configured reward base.
+This module sets `header.Rewardbase`, the address that receives this node's block reward, before any transaction of the block is executed:
+
+- `istanbul.policy = 2` (WeightedRandom) and the staking info has a non-zero reward address registered for this node (the `nodeId` / `rewardAddress` entry, read from the legacy AddressBook before the Permissionless hardfork and from AddressBookV2 since): the registered reward address.
+- Otherwise (any other proposer policy, no staking entry for this node, or a zero registered address): the node's configured reward base (`--rewardbase`).
+
+The value must be final here because, when `reward.deferredtxfee = false`, the transaction fee is credited to `header.Rewardbase` while each transaction runs (`TransitionDb`, since Magma). A failure to read the staking info is returned (the block is not built) rather than treated as "no entry". Blocks that an unfixed node already sealed with a header naming a different address than the one it executed with stay unreplayable (every node executes with the sealed header); such a chain has to be regenerated.
+
+#### VerifyHeader
+
+Under WeightedRandom, if the staking info has a non-zero reward address registered for the block's proposer, `header.Rewardbase` must be that address; otherwise (no entry, zero address, another policy, or an unreadable staking info) the header is accepted. Every header PrepareHeader produces passes this check; the check is looser than PrepareHeader's choice.
 
 ### BlockState
 
 #### FinalizeState
 
-After all transactions are processed, calculate and accredit the block reward.
+After all transactions are processed, calculate and accredit the block reward. The header is not modified.
 
 ### Execution
 
