@@ -1,2 +1,3 @@
 FROM kaiachain/kaia:v2.2.2
 COPY build/bin/ken /klaytn-docker-pkg/bin/ken
+COPY build/packaging/linux/bin/kend /klaytn-docker-pkg/bin/kend
