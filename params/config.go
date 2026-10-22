@@ -893,6 +893,18 @@ func (c *ChainConfig) Rules(num *big.Int) Rules {
 	}
 }
 
+// BurnsNonDeferredTxFee reports whether half of the transaction fee is burnt when the fee is
+// processed immediately after each transaction (reward.deferredtxfee = false).
+// The Magma rule specifies the burn, but Kaia v0.9.0 to v2.2.2 did not apply it and credited the
+// whole fee to Rewardbase (#816, v3.0.0-rc.1, re-introduced the burn), so the burn is activated at
+// the Permissionless hardfork to keep the blocks of those releases replayable (#1097).
+// Deferred fees (reward.deferredtxfee = true) are unaffected; their burn has been applied at
+// block finalization since Magma. This predicate only looks at the hardforks; callers must check
+// reward.deferredtxfee themselves.
+func (r Rules) BurnsNonDeferredTxFee() bool {
+	return r.IsMagma && r.IsPermissionless
+}
+
 // Mainnet genesis config
 func GetDefaultGovernanceConfigForGenesis() *GovernanceConfig {
 	gov := &GovernanceConfig{

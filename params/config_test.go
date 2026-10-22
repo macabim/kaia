@@ -146,3 +146,31 @@ func BenchmarkChainConfig_Copy(b *testing.B) {
 		a.Copy()
 	}
 }
+
+// TestRules_BurnsNonDeferredTxFee verifies that the non-deferred fee burn (half of each transaction fee)
+// is activated at the Permissionless hardfork, not at Magma, so that blocks produced before #816 by
+// chains with reward.deferredtxfee=false remain replayable (#1097).
+func TestRules_BurnsNonDeferredTxFee(t *testing.T) {
+	testcases := []struct {
+		maxHardfork string // see TestKaiaConfig
+		want        bool
+	}{
+		{"ethTxType", false},
+		{"magma", false},
+		{"osaka", false},
+		{"permissionless", true},
+	}
+	for _, tc := range testcases {
+		assert.Equal(t, tc.want, TestKaiaConfig(tc.maxHardfork).Rules(big.NewInt(0)).BurnsNonDeferredTxFee(), tc.maxHardfork)
+	}
+
+	// The predicate requires Magma as well. TransitionDb only consults it inside the IsMagma branch,
+	// so a configuration without Magma never burns regardless of Permissionless.
+	assert.False(t, Rules{IsPermissionless: true}.BurnsNonDeferredTxFee())
+
+	// The burn starts exactly at the Permissionless block.
+	config := TestKaiaConfig("osaka")
+	config.PermissionlessCompatibleBlock = big.NewInt(150)
+	assert.False(t, config.Rules(big.NewInt(149)).BurnsNonDeferredTxFee())
+	assert.True(t, config.Rules(big.NewInt(150)).BurnsNonDeferredTxFee())
+}
