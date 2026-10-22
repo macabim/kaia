@@ -154,6 +154,7 @@ func (api *EthAPI) SimulateV1(ctx context.Context, args SimulateV1Args, block *r
 			if err != nil {
 				return nil, fmt.Errorf("call %d: %w", i, err)
 			}
+			intrinsic = msg.ValidatedGas().IntrinsicGas
 			if err := msg.Validate(st, signer, header.Number.Uint64(), false); err != nil {
 				return nil, err
 			}
