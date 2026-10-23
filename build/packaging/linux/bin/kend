@@ -418,7 +418,7 @@ start_docker() {
     __check_option
 
     echo "$BIN/ken $OPTIONS"
-    $BIN/ken $OPTIONS
+    exec $BIN/ken $OPTIONS
 }
 
 stop() {
